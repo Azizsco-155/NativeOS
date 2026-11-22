@@ -16,12 +16,12 @@ rayon = { workspace = true }
 libc = { workspace = true }
 serde_json = "1"
 # pure-Rust zstd decoder, already in the lock through ibuilder-shadersplit: the fallback backend (no C), and the oracle of the C one in the tests
-ruzstd = { version = "0.8", default-features = false, features = ["std", "hash"] }
-zstd = { version = "0.13", optional = true, default-features = false }
+ruzstd = { version = "0.9", default-features = false, features = ["std", "hash"] }
+zstd = { version = "0.14", optional = true, default-features = false }
 
 [dev-dependencies]
 # the test containers' zstd frames are made by the C library (the readers under test: libzstd and ruzstd)
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 [[bin]]
 name = "ibuilder-nup"

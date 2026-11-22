@@ -13,4 +13,4 @@ memmap2 = { workspace = true }
 [dev-dependencies]
 ibuilder-testkit = { path = "../ibuilder-testkit" }
 # the C libzstd compresses the stock-zstd test frames the shared machinery of the ZBIC decoder is checked with
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }

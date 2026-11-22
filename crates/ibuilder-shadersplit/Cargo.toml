@@ -18,7 +18,7 @@ serde_json = "1"
 # inflate / gzip, pure Rust backend (miniz_oxide): builds for aarch64-apple-ios
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # pure-Rust zstd decoder (dictionaries included): the default `Zstd` implementation
-ruzstd = { version = "0.8", default-features = false, features = ["std", "hash"] }
+ruzstd = { version = "0.9", default-features = false, features = ["std", "hash"] }
 # raw LZMA1 for Unity bundles
 lzma-rs = "0.3"
 # CRC-32 of zip members (the crate flate2 already uses)
