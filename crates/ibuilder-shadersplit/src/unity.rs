@@ -909,7 +909,7 @@ pub fn for_each_object(
             known_trees()
                 .into_iter()
                 .filter(|((class, _), _)| *class == CLASS_SHADER)
-                .filter_map(|((_, _), candidate)| {
+                .find_map(|((_, _), candidate)| {
                     let mut rd = Rd {
                         d: &data,
                         p: 0,
@@ -917,19 +917,28 @@ pub fn for_each_object(
                     };
                     let value = read_object(&mut rd, &candidate).ok()?;
                     let parsed = value.get("m_ParsedForm")?;
-                    (parsed.get("m_SubShaders").is_some() || value.get("m_Name").is_some())
-                        .then_some(value)
+                    let looks_like_shader = parsed.get("m_SubShaders").is_some()
+                        || value.get("m_Name").is_some();
+                    // `value` borrows the candidate tree; release it before keeping the Arc.
+                    drop(value);
+                    looks_like_shader.then_some(candidate)
                 })
-                .next()
         } else {
             None
         };
-        let Some(value) = candidate else {
+        let Some(candidate) = candidate else {
             return Err(Failure::NoTree(format!(
                 "class {cid} (type hash {}) has no type tree available",
                 hex(h)
             )));
         };
+        // Decode again while the selected tree's Arc is alive; `Val` borrows its tree.
+        let mut rd = Rd {
+            d: &data,
+            p: 0,
+            le: t.le,
+        };
+        let value = read_object(&mut rd, &candidate)?;
         f(*cid, pid, &value)?;
     }
     Ok(())
