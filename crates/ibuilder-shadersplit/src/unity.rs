@@ -884,26 +884,53 @@ pub fn for_each_object(
         if !want.is_empty() && !want.contains(cid) {
             continue;
         }
-        let root = match root {
-            Some(r) => r,
-            None => {
-                return Err(Failure::NoTree(format!(
-                    "class {cid} (type hash {}) has no type tree available",
-                    hex(h)
-                )));
-            }
-        };
         let (off, n) = t.object_range(start, size, src.len());
         let data = src
             .read(off, n)
             .map_err(|e| Failure::Red(format!("OSError: {e}")))?;
-        let mut rd = Rd {
-            d: &data,
-            p: 0,
-            le: t.le,
+        if let Some(root) = root {
+            let mut rd = Rd {
+                d: &data,
+                p: 0,
+                le: t.le,
+            };
+            let v = read_object(&mut rd, root)?;
+            f(*cid, pid, &v)?;
+            continue;
+        }
+
+        // Some Unity 2018/2019 serialized files strip the type tree but use a
+        // layout already present in another Unity version. INSIDE is one
+        // example: refusing the whole file leaves its runtime programs out of
+        // shader_map.tsv, so every draw later has no_pipeline. Try the shipped
+        // Shader layouts only after the exact (class, hash) lookup failed.
+        // Files with an exact tree keep the byte-for-byte old path above.
+        let candidate = if *cid == CLASS_SHADER {
+            known_trees()
+                .into_iter()
+                .filter(|((class, _), _)| *class == CLASS_SHADER)
+                .filter_map(|((_, _), candidate)| {
+                    let mut rd = Rd {
+                        d: &data,
+                        p: 0,
+                        le: t.le,
+                    };
+                    let value = read_object(&mut rd, &candidate).ok()?;
+                    let parsed = value.get("m_ParsedForm")?;
+                    (parsed.get("m_SubShaders").is_some() || value.get("m_Name").is_some())
+                        .then_some(value)
+                })
+                .next()
+        } else {
+            None
         };
-        let v = read_object(&mut rd, root)?;
-        f(*cid, pid, &v)?;
+        let Some(value) = candidate else {
+            return Err(Failure::NoTree(format!(
+                "class {cid} (type hash {}) has no type tree available",
+                hex(h)
+            )));
+        };
+        f(*cid, pid, &value)?;
     }
     Ok(())
 }

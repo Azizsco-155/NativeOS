@@ -1,0 +1,171 @@
+name: Build NativeOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: "Version de l’application (ex. 0.1.5)"
+        required: true
+        default: "0.1.5"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The repository does not contain the original iOSBuilder checkout or proprietary
+  # engine inputs. Configure the URL and optional token as Actions secrets.
+  IOSBUILDER_DOWNLOAD_URL: ${{ secrets.IOSBUILDER_DOWNLOAD_URL }}
+  IOSBUILDER_DOWNLOAD_TOKEN: ${{ secrets.IOSBUILDER_DOWNLOAD_TOKEN }}
+  IOSBUILDER_SHA256: ${{ secrets.IOSBUILDER_SHA256 }}
+  FONT_STANDINS_URL: ${{ secrets.FONT_STANDINS_URL }}
+  FONT_STANDINS_TOKEN: ${{ secrets.FONT_STANDINS_TOKEN }}
+  FONT_STANDINS_SHA256: ${{ secrets.FONT_STANDINS_SHA256 }}
+
+jobs:
+  build-ipa:
+    name: Build and verify device IPA
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout NativeOS
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode.app
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          python3 --version
+          if ! command -v dotnet >/dev/null 2>&1; then
+            echo "::error::The runner image has no .NET SDK. Install the required SDK before running this workflow."
+            exit 1
+          fi
+          dotnet --info
+
+      - name: Install native build dependencies
+        run: |
+          set -euo pipefail
+          brew update
+          brew install rustup-init zstd
+          rustup-init -y --no-modify-path
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          dotnet workload install ios
+
+      - name: Install Python font tooling
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/font-venv"
+          "$RUNNER_TEMP/font-venv/bin/python" -m pip install --upgrade pip fonttools
+          echo "FONT_PYTHON=$RUNNER_TEMP/font-venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Download external iOSBuilder input
+        run: |
+          set -euo pipefail
+          : "${IOSBUILDER_DOWNLOAD_URL:?Set the IOSBUILDER_DOWNLOAD_URL Actions secret}"
+          mkdir -p "$RUNNER_TEMP/inputs" "$RUNNER_TEMP/iosbuilder"
+          archive="$RUNNER_TEMP/iosbuilder-input.tar.zst"
+
+          if [ -n "${IOSBUILDER_DOWNLOAD_TOKEN:-}" ]; then
+            curl --fail --location --retry 3 \
+              --header "Authorization: Bearer $IOSBUILDER_DOWNLOAD_TOKEN" \
+              "$IOSBUILDER_DOWNLOAD_URL" --output "$archive"
+          else
+            curl --fail --location --retry 3 \
+              "$IOSBUILDER_DOWNLOAD_URL" --output "$archive"
+          fi
+
+          if [ -n "${IOSBUILDER_SHA256:-}" ]; then
+            echo "$IOSBUILDER_SHA256  $archive" | shasum -a 256 -c -
+          else
+            echo "::warning::IOSBUILDER_SHA256 is not set; the external input was not hash-pinned."
+          fi
+
+          tar --use-compress-program=unzstd -xf "$archive" -C "$RUNNER_TEMP/iosbuilder"
+          test -d "$RUNNER_TEMP/iosbuilder"
+
+      - name: Download free font stand-ins when configured
+        if: ${{ env.FONT_STANDINS_URL != '' }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/font-standins.tar.zst"
+          mkdir -p "$RUNNER_TEMP/font-standins"
+
+          if [ -n "${FONT_STANDINS_TOKEN:-}" ]; then
+            curl --fail --location --retry 3 \
+              --header "Authorization: Bearer $FONT_STANDINS_TOKEN" \
+              "$FONT_STANDINS_URL" --output "$archive"
+          else
+            curl --fail --location --retry 3 \
+              "$FONT_STANDINS_URL" --output "$archive"
+          fi
+
+          : "${FONT_STANDINS_SHA256:?Set FONT_STANDINS_SHA256 when FONT_STANDINS_URL is configured}"
+          echo "$FONT_STANDINS_SHA256  $archive" | shasum -a 256 -c -
+          tar --use-compress-program=unzstd -xf "$archive" -C "$RUNNER_TEMP/font-standins"
+          echo "FONT_STANDINS_DIR=$RUNNER_TEMP/font-standins" >> "$GITHUB_ENV"
+
+      - name: Configure local build
+        run: |
+          set -euo pipefail
+          cp scripts/local.env.example scripts/local.env
+          {
+            echo "IOSBUILDER=$RUNNER_TEMP/iosbuilder"
+            echo "PIN_STRICT=1"
+          } >> scripts/local.env
+
+          if [ -n "${{ inputs.app_version }}" ]; then
+            version="${{ inputs.app_version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || {
+            echo "::error::Invalid application version: $version"
+            exit 1
+          }
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Run source checks
+        run: |
+          set -euo pipefail
+          scripts/check-patches-apply.sh
+          scripts/check-forbidden-files.sh
+          git diff --check
+
+      - name: Build device IPA
+        run: |
+          set -euo pipefail
+          scripts/build-app.sh device
+
+      - name: Verify IPA and create digest
+        run: |
+          set -euo pipefail
+          ipa="$(find dist -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          test -n "$ipa"
+          app/verify_ipa.sh "$ipa"
+          shasum -a 256 "$ipa" | tee "$ipa.sha256"
+          echo "IPA_PATH=$ipa" >> "$GITHUB_ENV"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeOS-ipa-${{ github.run_number }}
+          if-no-files-found: error
+          path: |
+            dist/*.ipa
+            dist/*.ipa.sha256
+            dist/*.verify/**
+            dist/MANIFEST.txt

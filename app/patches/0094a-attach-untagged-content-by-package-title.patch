@@ -1,0 +1,66 @@
+# 0094a-attach-untagged-content-by-package-title.patch -- read an NSP/XCI/NSZ's content-meta title id before the picker classifies it.
+# 0091 already reads and persists this id during the Documents refresh, but the Import picker classified
+# the temporary file by its name first and rejected `INSIDE v65536.nsp` before that refresh could run.
+# No game data is included: the reader is used only on the selected package at runtime.
+#
+diff -ruN m/GameAppAttachUi.cs n/GameAppAttachUi.cs
+--- m/GameAppAttachUi.cs	2026-11-22 01:22:19
++++ n/GameAppAttachUi.cs	2026-11-22 16:50:00
+@@ -143,17 +143,43 @@
+         var d = new AttachDelegate(urls => BeginInvokeOnMainThread(() =>
+         {
+-            var picks = ContentAttach.Classify(game, urls.Select(u => u.LastPathComponent));
+-            KnowExtras(picks.Where(p => p.Kind != ContentAttach.Kind.Refused).Select(p => p.Name));   // patch 0091: this flow says it itself
+-            foreach (var url in urls)
++            var names = urls.Select(u => u.LastPathComponent).ToList();
++            var documents = GameAppMain.Documents;
++            var keys = Path.Combine(documents, "prod.keys");
++            // patch 0094a: the picker gives us a temporary copy. Resolve an id-less package here,
++            // before ContentAttach.Classify, instead of rejecting it with "no [title id]".
++            // This is off the main thread because reading an NSP can inspect a large archive.
++            System.Threading.Tasks.Task.Run(() =>
+             {
+-                var p = picks.FirstOrDefault(x => string.Equals(x.Name, url.LastPathComponent, StringComparison.OrdinalIgnoreCase));
+-                if (p != null && p.Kind != ContentAttach.Kind.Refused) CopyIn(url);
+-                else { try { File.Delete(url.Path); } catch (Exception) { } }   // the picker's own copy in our tmp/
+-            }
+-            var text = ContentAttach.Report(picks);
+-            Write($"attach: {GameAppUi.DisplayName(game)}: {text}");
+-            var a = UIAlertController.Create(GameAppUi.DisplayName(game), text, UIAlertControllerStyle.Alert);
+-            a.AddAction(UIAlertAction.Create("OK", UIAlertActionStyle.Cancel, null));
+-            PresentWhenFree(a);
+-            RefreshScreen();
++                foreach (var url in urls)
++                {
++                    var name = url.LastPathComponent;
++                    if (!Cloud.IsGameFile(name) || GameAppUi.IsNup(name) || GameAppUi.BaseTitleIdOf(name) != null) continue;
++                    try
++                    {
++                        using var stream = File.OpenRead(url.Path);
++                        GameIconsStream.Read(keys, stream, out var control, out _, out var content);
++                        var title = ContentSet.KeepTitle(control, content, name.EndsWith(".xci", StringComparison.OrdinalIgnoreCase));
++                        if (title != 0) GameAppUi.SetTitleFromContent(name, title);
++                    }
++                    catch (Exception) { } // Classify will report an unreadable/unidentified package below.
++                }
++                try { GameAppUi.SaveTitlesFromContent(documents); } catch (Exception) { }
++                BeginInvokeOnMainThread(() =>
++                {
++                    var picks = ContentAttach.Classify(game, names);
++                    KnowExtras(picks.Where(p => p.Kind != ContentAttach.Kind.Refused).Select(p => p.Name));   // patch 0091: this flow says it itself
++                    foreach (var url in urls)
++                    {
++                        var p = picks.FirstOrDefault(x => string.Equals(x.Name, url.LastPathComponent, StringComparison.OrdinalIgnoreCase));
++                        if (p != null && p.Kind != ContentAttach.Kind.Refused) CopyIn(url);
++                        else { try { File.Delete(url.Path); } catch (Exception) { } }   // the picker's own copy in our tmp/
++                    }
++                    var text = ContentAttach.Report(picks);
++                    Write($"attach: {GameAppUi.DisplayName(game)}: {text}");
++                    var a = UIAlertController.Create(GameAppUi.DisplayName(game), text, UIAlertControllerStyle.Alert);
++                    a.AddAction(UIAlertAction.Create("OK", UIAlertActionStyle.Cancel, null));
++                    PresentWhenFree(a);
++                    RefreshScreen();
++                });
++            });
+         }));
+
