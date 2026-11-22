@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       app_version:
-        description: "Version de lâapplication (ex. 0.1.5)"
+        description: "Version de l’application (ex. 0.1.5)"
         required: true
         default: "0.1.5"
         type: string
