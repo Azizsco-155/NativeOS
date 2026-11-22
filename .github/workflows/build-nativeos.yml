@@ -58,9 +58,14 @@ jobs:
         run: |
           set -euo pipefail
           brew update
-          brew install rustup-init zstd
-          rustup-init -y --no-modify-path
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          brew install zstd
+          if ! command -v rustup >/dev/null 2>&1; then
+            brew install rustup-init
+            rustup-init -y --no-modify-path
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup --version
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
           dotnet workload install ios
 
