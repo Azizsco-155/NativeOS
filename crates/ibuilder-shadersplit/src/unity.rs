@@ -915,12 +915,11 @@ pub fn for_each_object(
                         p: 0,
                         le: t.le,
                     };
-                    let value = read_object(&mut rd, &candidate).ok()?;
-                    let parsed = value.get("m_ParsedForm")?;
-                    let looks_like_shader = parsed.get("m_SubShaders").is_some()
-                        || value.get("m_Name").is_some();
-                    // `value` borrows the candidate tree; release it before keeping the Arc.
-                    drop(value);
+                    let looks_like_shader = {
+                        let value = read_object(&mut rd, &candidate).ok()?;
+                        let parsed = value.get("m_ParsedForm")?;
+                        parsed.get("m_SubShaders").is_some() || value.get("m_Name").is_some()
+                    };
                     looks_like_shader.then_some(candidate)
                 })
         } else {
