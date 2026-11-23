@@ -100,6 +100,7 @@ jobs:
 
           tar --use-compress-program=unzstd -xf "$archive" -C "$RUNNER_TEMP/iosbuilder"
           test -d "$RUNNER_TEMP/iosbuilder"
+          scripts/verify-iosbuilder-input.sh "$RUNNER_TEMP/iosbuilder"
 
       - name: Download free font stand-ins when configured
         if: ${{ env.FONT_STANDINS_URL != '' }}
