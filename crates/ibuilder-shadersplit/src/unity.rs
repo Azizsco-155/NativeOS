@@ -918,7 +918,16 @@ pub fn for_each_object(
                     let looks_like_shader = {
                         let value = read_object(&mut rd, &candidate).ok()?;
                         let parsed = value.get("m_ParsedForm")?;
-                        parsed.get("m_SubShaders").is_some() || value.get("m_Name").is_some()
+                        let named = [value.get("m_Name"), parsed.get("m_Name")]
+                            .into_iter()
+                            .all(|name| matches!(name, Some(Val::Str(s)) if !s.trim().is_empty()));
+                        let has_pass = parsed.get("m_SubShaders").is_some_and(|sub_shaders| {
+                            sub_shaders.list().iter().any(|sub| {
+                                sub.get("m_Passes")
+                                    .is_some_and(|passes| !passes.list().is_empty())
+                            })
+                        });
+                        named && has_pass
                     };
                     looks_like_shader.then_some(candidate)
                 })
