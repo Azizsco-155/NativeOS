@@ -909,27 +909,44 @@ pub fn for_each_object(
             known_trees()
                 .into_iter()
                 .filter(|((class, _), _)| *class == CLASS_SHADER)
-                .filter_map(|((_, _), candidate)| {
+                .find_map(|((_, _), candidate)| {
                     let mut rd = Rd {
                         d: &data,
                         p: 0,
                         le: t.le,
                     };
-                    let value = read_object(&mut rd, &candidate).ok()?;
-                    let parsed = value.get("m_ParsedForm")?;
-                    (parsed.get("m_SubShaders").is_some() || value.get("m_Name").is_some())
-                        .then_some(value)
+                    let looks_like_shader = {
+                        let value = read_object(&mut rd, &candidate).ok()?;
+                        let parsed = value.get("m_ParsedForm")?;
+                        let named = [value.get("m_Name"), parsed.get("m_Name")]
+                            .into_iter()
+                            .all(|name| matches!(name, Some(Val::Str(s)) if !s.trim().is_empty()));
+                        let has_pass = parsed.get("m_SubShaders").is_some_and(|sub_shaders| {
+                            sub_shaders.list().iter().any(|sub| {
+                                sub.get("m_Passes")
+                                    .is_some_and(|passes| !passes.list().is_empty())
+                            })
+                        });
+                        named && has_pass
+                    };
+                    looks_like_shader.then_some(candidate)
                 })
-                .next()
         } else {
             None
         };
-        let Some(value) = candidate else {
+        let Some(candidate) = candidate else {
             return Err(Failure::NoTree(format!(
                 "class {cid} (type hash {}) has no type tree available",
                 hex(h)
             )));
         };
+        // Decode again while the selected tree's Arc is alive; `Val` borrows its tree.
+        let mut rd = Rd {
+            d: &data,
+            p: 0,
+            le: t.le,
+        };
+        let value = read_object(&mut rd, &candidate)?;
         f(*cid, pid, &value)?;
     }
     Ok(())

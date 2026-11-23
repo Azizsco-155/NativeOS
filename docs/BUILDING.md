@@ -14,6 +14,22 @@ A Mac with:
 
 Your dumps, keys and certificates are never needed by the build and must never be committed.
 
+For GitHub Actions, the same read-only tree can be supplied as a private `tar.zst` archive through the
+`IOSBUILDER_DOWNLOAD_URL` Actions secret. The archive is extracted into the runner and checked before the IPA
+build by `scripts/verify-iosbuilder-input.sh`. It must contain the iOS and simulator host dylibs, the patched engine
+tree, zsign, OpenSSL, zstd, and either a prebuilt SPIRV-Cross archive or its source checkout. Set
+`IOSBUILDER_SHA256` to the archive's SHA-256; `IOSBUILDER_DOWNLOAD_TOKEN` is optional when the URL requires a
+Bearer token. Do not put games, `prod.keys`, certificates or provisioning profiles in this archive.
+
+From the NativeOS checkout, create the archive and record its digest with:
+
+```bash
+scripts/package-iosbuilder-input.sh /path/to/iOSBuilder /tmp/iosbuilder-input.tar.zst
+```
+
+Upload that archive to private object storage, put its HTTPS download URL in `IOSBUILDER_DOWNLOAD_URL`, and put
+the printed digest in `IOSBUILDER_SHA256`. The packaging helper copies only the build inputs listed above.
+
 ## Configure
 
 ```bash
